@@ -14,7 +14,7 @@ import { Task, HabitTask } from "../models/Task";
 import { TasksContext } from "../context/TasksContext";
 import { GoalsContext } from "../context/GoalsContext";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { DAY_LETTERS } from "../utils/dates";
+import { DAY_LETTERS, dayIndexFromISO, todayISOLocal } from "../utils/dates";
 import { isHabit } from "../models/typeGuards";
 
 type Props = { tasks: Task[]; goalId: string };
@@ -24,8 +24,8 @@ export const HabitTasksTab = ({ tasks, goalId }: Props) => {
   const { tasks: tasksAll, updateTask, deleteTask } = useContext(TasksContext);
   const { recomputeAfterTaskToggle } = useContext(GoalsContext);
 
-  const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
-  const todayIdx = useMemo(() => new Date(todayISO).getDay(), [todayISO]);
+  const todayISO = useMemo(() => todayISOLocal(), []);
+  const todayIdx = useMemo(() => dayIndexFromISO(todayISO), [todayISO]);
 
   const habitTasks = useMemo(() => tasks.filter(isHabit), [tasks]);
 

@@ -3,7 +3,11 @@ import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { HabitGoal } from "../../models/Goal";
 import { TasksContext } from "../../context/TasksContext";
-import { formatCustomDays } from "../../utils/dates";
+import {
+  dayIndexFromISO,
+  formatCustomDays,
+  todayISOLocal,
+} from "../../utils/dates";
 
 export const HabitGoalCard = ({
   goal,
@@ -15,8 +19,8 @@ export const HabitGoalCard = ({
   const { getTasksByGoal } = useContext(TasksContext);
   const tasks = getTasksByGoal(goal.id).filter(t => t.type === "habit");
 
-  const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
-  const todayIdx = useMemo(() => new Date(todayISO).getDay(), [todayISO]);
+  const todayISO = useMemo(() => todayISOLocal(), []);
+  const todayIdx = useMemo(() => dayIndexFromISO(todayISO), [todayISO]);
 
   const tasksToday = tasks.filter(t => t.dayOfWeek == todayIdx);
   const done = goal.weeklyProgress.count;
