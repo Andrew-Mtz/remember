@@ -1,7 +1,7 @@
 // services/progress.ts
 import { HabitGoal } from "../models/Goal";
 import { Task } from "../models/Task";
-import { addDaysISO, isSameWeek } from "../utils/dates";
+import { addDaysISO, isSameWeek, parseLocalISODate } from "../utils/dates";
 
 // --- helpers ---
 const isHabitTask = (
@@ -44,7 +44,7 @@ export function isHabitDayComplete(
   all: Task[],
   iso: string
 ): boolean {
-  const d = new Date(iso);
+  const d = parseLocalISODate(iso);
   const dayIndex = d.getDay(); // 0..6
   const planned = goalTasksForDate(goalId, all, dayIndex);
   if (planned.length === 0) return false; // sin plan → no cuenta
