@@ -1,36 +1,134 @@
-import React from "react";
+import React, { useContext, useMemo } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { Goal } from "../models/Goal";
+import { TasksContext } from "../context/TasksContext";
 
 type Props = {
   goal: Goal;
 };
 
 export const GoalProgressHeader = ({ goal }: Props) => {
-  const { emoji, title, description, weeklyTarget, weeklyProgress, streak } =
-    goal;
+  const { tasks } = useContext(TasksContext);
 
-  const progress = Math.min(weeklyProgress.count / weeklyTarget, 1);
-  const remaining = Math.max(weeklyTarget - weeklyProgress.count, 0);
+  const isHabit = goal.type === "habit";
+  const isProject = goal.type === "project";
 
-  // Fechas de la semana actual
+  // ---- Utilidades de semana (Lun - Dom)
   const today = new Date();
-  const start = new Date(today);
-  start.setDate(today.getDate() - today.getDay() + 1); // Lunes
-  const end = new Date(start);
-  end.setDate(start.getDate() + 6); // Domingo
+  const monday = useMemo(() => {
+    const d = new Date(today);
+    const day = d.getDay(); // 0..6 (0=Dom)
+    const diff = day === 0 ? -6 : 1 - day; // mover a Lunes
+    d.setDate(d.getDate() + diff);
+    return d;
+  }, [today]);
+
+  const sunday = useMemo(() => {
+    const d = new Date(monday);
+    d.setDate(d.getDate() + 6);
+    return d;
+  }, [monday]);
 
   const formatDate = (d: Date) =>
     d.toLocaleDateString("es-UY", { day: "numeric", month: "short" });
 
-  const weekRange = `${formatDate(start)} - ${formatDate(end)}`;
-  const daysLeft = 6 - today.getDay(); // Ej: si es miércoles (3), quedan 3 días
+  const weekRange = `${formatDate(monday)} - ${formatDate(sunday)}`;
+  const daysLeft = Math.max(
+    0,
+    Math.ceil((sunday.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+  );
+
+  // ---- Proyecto: progreso por tareas (hechas/total)
+  const projectStats = useMemo(() => {
+    if (!isProject) return null;
+    const my = tasks.filter(
+      t => "goalId" in t && t.goalId === goal.id && t.type === "project"
+    );
+    const total = my.length;
+    const done = my.filter(t => t.completed).length;
+    const progress = total > 0 ? done / total : 0;
+    const remaining = Math.max(total - done, 0);
+    return { total, done, progress, remaining };
+  }, [isProject, tasks, goal.id]);
+
+  if (isHabit) {
+    const { emoji, title, description, weeklyTarget, weeklyProgress, streak } =
+      goal;
+
+    const safeTarget = Math.max(0, weeklyTarget || 0);
+    const safeCount = Math.max(0, weeklyProgress?.count || 0);
+    const progress = safeTarget > 0 ? Math.min(safeCount / safeTarget, 1) : 0;
+    const remaining = Math.max(safeTarget - safeCount, 0);
+
+    return (
+      <View style={styles.container}>
+        {/* Emoji y título */}
+        <View style={styles.topRow}>
+          <Text style={styles.emoji}>{emoji || "🎯"}</Text>
+          <View>
+            <Text style={styles.title}>{title}</Text>
+            {description ?
+              <Text style={styles.description}>{description}</Text>
+            : null}
+          </View>
+        </View>
+
+        {/* Progreso visual (círculos por día objetivo) */}
+        <View style={styles.progressBox}>
+          <Text style={styles.progressText}>
+            {safeCount} de {safeTarget}
+          </Text>
+
+          <View style={styles.circlesRow}>
+            {Array.from({ length: safeTarget }).map((_, i) => (
+              <View
+                key={i}
+                style={[styles.circle, i < safeCount && styles.circleDone]}
+              />
+            ))}
+          </View>
+
+          <Text style={styles.goalNote}>
+            {remaining === 0 ?
+              "¡Objetivo logrado!"
+            : `${remaining} más para lograrlo`}
+          </Text>
+
+          <View style={styles.weekInfo}>
+            <Text style={styles.weekText}>{weekRange}</Text>
+            <Text style={styles.weekText}>
+              {daysLeft} {daysLeft === 1 ? "día" : "días"} restantes
+            </Text>
+          </View>
+        </View>
+
+        {/* Racha actual */}
+        <View style={styles.streakRow}>
+          <View style={styles.streakBox}>
+            <Text style={styles.streakLabel}>🔥 Racha actual</Text>
+            <Text style={styles.streakValue}>{streak.current}</Text>
+          </View>
+          <View style={styles.streakBox}>
+            <Text style={styles.streakLabel}>🏆 Racha más larga</Text>
+            <Text style={styles.streakValue}>{streak.highest}</Text>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  // Proyecto
+  const { emoji, title, description } = goal;
+  const total = projectStats?.total ?? 0;
+  const done = projectStats?.done ?? 0;
+  const p = projectStats?.progress ?? 0;
+  const remainingTasks = projectStats?.remaining ?? 0;
 
   return (
     <View style={styles.container}>
       {/* Emoji y título */}
       <View style={styles.topRow}>
-        <Text style={styles.emoji}>{emoji || "🎯"}</Text>
+        <Text style={styles.emoji}>{emoji || "📦"}</Text>
         <View>
           <Text style={styles.title}>{title}</Text>
           {description ?
@@ -39,47 +137,24 @@ export const GoalProgressHeader = ({ goal }: Props) => {
         </View>
       </View>
 
-      {/* Progreso visual */}
+      {/* Progreso visual (barra) */}
       <View style={styles.progressBox}>
         <Text style={styles.progressText}>
-          {weeklyProgress.count} de {weeklyTarget}
+          {done} de {total} tareas completadas
         </Text>
 
-        <View style={styles.circlesRow}>
-          {Array.from({ length: weeklyTarget }).map((_, i) => (
-            <View
-              key={i}
-              style={[
-                styles.circle,
-                i < weeklyProgress.count && styles.circleDone,
-              ]}
-            />
-          ))}
+        <View style={styles.progressBar}>
+          <View style={[styles.progressFill, { width: `${p * 100}%` }]} />
         </View>
 
         <Text style={styles.goalNote}>
-          {remaining === 0 ?
-            "¡Objetivo logrado!"
-          : `${remaining} más para lograrlo`}
+          {remainingTasks === 0 ?
+            "¡Proyecto completado!"
+          : `Faltan ${remainingTasks} ${remainingTasks === 1 ? "tarea" : "tareas"}`
+          }
         </Text>
-
-        <View style={styles.weekInfo}>
-          <Text style={styles.weekText}>{weekRange}</Text>
-          <Text style={styles.weekText}>{daysLeft} días restantes</Text>
-        </View>
       </View>
-
-      {/* Racha actual */}
-      <View style={styles.streakRow}>
-        <View style={styles.streakBox}>
-          <Text style={styles.streakLabel}>🔥 Racha actual</Text>
-          <Text style={styles.streakValue}>{streak.current}</Text>
-        </View>
-        <View style={styles.streakBox}>
-          <Text style={styles.streakLabel}>🏆 Racha más larga</Text>
-          <Text style={styles.streakValue}>{streak.highest}</Text>
-        </View>
-      </View>
+      {/* Sin racha/semana para proyectos */}
     </View>
   );
 };
@@ -125,11 +200,14 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     color: "#444",
   },
+
+  // Hábitos: círculos
   circlesRow: {
     flexDirection: "row",
     justifyContent: "center",
     gap: 10,
     marginBottom: 8,
+    flexWrap: "wrap",
   },
   circle: {
     width: 18,
@@ -142,6 +220,20 @@ const styles = StyleSheet.create({
     backgroundColor: "#4e88ff",
     borderColor: "#4e88ff",
   },
+
+  // Proyectos: barra
+  progressBar: {
+    height: 10,
+    backgroundColor: "#e6ecff",
+    borderRadius: 6,
+    overflow: "hidden",
+    marginBottom: 8,
+  },
+  progressFill: {
+    height: "100%",
+    backgroundColor: "#4e88ff",
+  },
+
   goalNote: {
     textAlign: "center",
     fontSize: 14,

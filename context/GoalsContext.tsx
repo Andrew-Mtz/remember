@@ -1,24 +1,31 @@
 import { createContext } from "react";
 import { Goal } from "../models/Goal";
+import { Task } from "../models/Task";
 
-type GoalsContextType = {
+export type GoalsContextType = {
   goals: Goal[];
-  addGoal: (goal: Goal) => void;
-  updateGoal: (goal: Goal) => void;
-  deleteGoal: (id: string) => void;
-  registerGoalActivity: (goalId: string, todayISO: string) => Promise<void>;
-  adjustWeeklyOnly: (
+  addGoal: (goal: Goal) => Promise<void>;
+  updateGoal: (goal: Goal) => Promise<void>;
+  deleteGoal: (id: string) => Promise<void>;
+
+  // NUEVO – núcleo del modelo
+  recomputeAfterTaskToggle: (
     goalId: string,
-    delta: number,
+    allTasks: Task[],
     todayISO: string
   ) => Promise<void>;
+
+  runDailyRollover: (allTasks: Task[], todayISO: string) => Promise<void>;
+  runWeeklyRollover: (allTasks: Task[], todayISO: string) => Promise<void>;
 };
 
 export const GoalsContext = createContext<GoalsContextType>({
   goals: [],
-  addGoal: () => {},
-  updateGoal: () => {},
-  deleteGoal: () => {},
-  registerGoalActivity: async () => {},
-  adjustWeeklyOnly: async () => {},
+  addGoal: async () => {},
+  updateGoal: async () => {},
+  deleteGoal: async () => {},
+
+  recomputeAfterTaskToggle: async () => {},
+  runDailyRollover: async () => {},
+  runWeeklyRollover: async () => {},
 });

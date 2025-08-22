@@ -1,4 +1,6 @@
-import { Task } from "./Task";
+import { HabitTask, ProjectTask } from "./Task";
+
+export type GoalType = "habit" | "project";
 
 export type GoalMessages = {
   fromPast: {
@@ -11,38 +13,62 @@ export type GoalMessages = {
   };
 };
 
-export type Goal = {
+export type BaseGoal = {
   id: string;
-  emoji?: string; // opcional, si no se elige uno se usa un emoji por defecto
+  emoji?: string;
   title: string;
   description?: string;
   category: string;
-
-  // Métrica principal: "tasks" o "days"
-  progressType: "tasks" | "days";
-  weeklyTarget: number; // cuántas tareas o días desea lograr por semana
-
-  // Racha total acumulada (días o tareas consecutivos)
-  streak: {
-    current: number;
-    highest: number;
-    active: boolean; // ¿sigue en racha?
-    lastCheck: string; // fecha de última actividad que contó para la racha
-  };
-
-  // Progreso de esta semana
-  weeklyProgress: {
-    count: number;
-    updatedAt: string; // para saber si hay que resetear lunes
-  };
-
-  tasks: Task[]; // puede estar vacío si es por días
   startDate: string;
   endDate?: string;
-
   messages: GoalMessages;
   remindersEnabled: boolean;
-
   createdAt: string;
   updatedAt: string;
 };
+
+export type HabitGoal = BaseGoal & {
+  type: "habit";
+  progressType: "days";
+  /** Días activos de la semana (0=Dom ... 6=Sáb) */
+  daysOfWeek: number[];
+  /** DERIVADO: igual a daysOfWeek.length, se persiste para acceso rápido en UI */
+  weeklyTarget: number;
+
+  streak: {
+    current: number;
+    highest: number;
+    active: boolean;
+    lastCheck: string;
+  };
+  weeklyProgress: {
+    count: number;
+    updatedAt: string;
+  };
+  tasks: HabitTask[];
+};
+
+export type ProjectGoal = BaseGoal & {
+  type: "project";
+  progressType: "tasks";
+  tasks: ProjectTask[]; // lista de pasos únicos
+};
+
+export type QuitGoal = BaseGoal & {
+  type: "quit";
+  progressType: "streak"; // para diferenciar en UI
+  streak: {
+    current: number;
+    highest: number;
+    active: boolean;
+    lastCheck: string; // última fecha procesada (ISO)
+  };
+  relapses: { date: string; reason?: string }[]; // recaídas con motivo
+  baselinePerWeek?: number; // estimación inicial de frecuencia
+  stats?: {
+    rollingPerWeek: number; // frecuencia actual estimada
+    updatedAt: string;
+  };
+};
+
+export type Goal = HabitGoal | ProjectGoal | QuitGoal;

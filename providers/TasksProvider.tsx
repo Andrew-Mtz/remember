@@ -1,7 +1,9 @@
+// providers/TasksProvider.tsx
 import React, { useEffect, useState } from "react";
 import { Task } from "../models/Task";
 import { loadTasks, saveTasks } from "../services/storage";
 import { TasksContext } from "../context/TasksContext";
+import { isHabit, isStandalone } from "../models/typeGuards";
 
 export const TasksProvider = ({ children }: { children: React.ReactNode }) => {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -22,6 +24,11 @@ export const TasksProvider = ({ children }: { children: React.ReactNode }) => {
     await persist([...tasks, task]);
   };
 
+  const bulkAdd = async (newTasks: Task[]) => {
+    if (!newTasks?.length) return;
+    await persist([...tasks, ...newTasks]);
+  };
+
   const updateTask = async (task: Task) => {
     const updated = tasks.map(t => (t.id === task.id ? task : t));
     await persist(updated);
@@ -33,27 +40,33 @@ export const TasksProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   const getTasksForToday = () => {
-    const today = new Date().toISOString().split("T")[0];
-    return tasks.filter(
-      t =>
-        t.date === today ||
-        t.recurrence?.type === "daily" ||
-        (t.recurrence?.type === "weekdays" &&
-          new Date().getDay() >= 1 &&
-          new Date().getDay() <= 5) ||
-        (t.recurrence?.type === "custom" &&
-          t.recurrence.daysOfWeek?.includes(new Date().getDay()))
-    );
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const todayIdx = new Date(todayISO).getDay();
+
+    return tasks.filter(t => {
+      if (isHabit(t)) return t.dayOfWeek === todayIdx;
+      if (isStandalone(t)) {
+        const r = t.recurrence?.type;
+        if (!r || r === "once") return t.completedDates?.includes(todayISO);
+        if (r === "daily") return true;
+        if (r === "custom")
+          return t.recurrence?.daysOfWeek?.includes(todayIdx) ?? false;
+        // weekly/monthly: acá podrías calcular por intervalo si querés
+        return false;
+      }
+      return false; // los project no son “para hoy” por recurrencia
+    });
   };
 
   const getTasksByGoal = (goalId: string) =>
-    tasks.filter(t => t.goalId === goalId);
+    tasks.filter(t => (t as any).goalId === goalId);
 
   return (
     <TasksContext.Provider
       value={{
         tasks,
         addTask,
+        bulkAdd, // 👈 expuesto
         updateTask,
         deleteTask,
         getTasksForToday,

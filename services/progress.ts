@@ -1,107 +1,157 @@
 // services/progress.ts
-import { Goal } from "../models/Goal";
-import {
-  addDaysISO,
-  clamp,
-  isSameDay,
-  isSameWeek,
-  toISODate,
-} from "../utils/dates";
+import { HabitGoal } from "../models/Goal";
+import { Task } from "../models/Task";
+import { addDaysISO, isSameWeek } from "../utils/dates";
 
-/**
- * Resetea progreso semanal si cambió de semana.
- */
-export function ensureWeeklyWindow(goal: Goal, todayISO: string): Goal {
-  if (!isSameWeek(todayISO, goal.weeklyProgress.updatedAt)) {
+// --- helpers ---
+const isHabitTask = (
+  t: Task
+): t is Task & { type: "habit"; goalId: string; dayOfWeek: number } =>
+  t.type === "habit";
+
+// Solo tiene sentido para hábitos
+export function ensureWeeklyWindowHabit(
+  goal: HabitGoal,
+  todayISO: string
+): HabitGoal {
+  if (!isSameWeek(goal.weeklyProgress.updatedAt, todayISO)) {
     return {
       ...goal,
-      weeklyProgress: {
-        count: 0,
-        updatedAt: todayISO,
-      },
+      weeklyProgress: { count: 0, updatedAt: todayISO },
     };
   }
   return goal;
 }
 
-/**
- * Aplica delta (+1 o -1) al progreso semanal y actualiza updatedAt.
- * El count se "cappea" entre 0 y weeklyTarget (para mostrar X de Y).
- */
-export function applyWeeklyProgress(
-  goal: Goal,
-  delta: number,
-  todayISO: string
-): Goal {
-  const next = { ...goal };
-  const nextCount = clamp(
-    goal.weeklyProgress.count + delta,
-    0,
-    Math.max(0, goal.weeklyTarget || 0)
+// 1) ¿Qué tareas del objetivo aplican a una fecha? (ahora con dayOfWeek: number)
+export function goalTasksForDate(
+  goalId: string,
+  all: Task[],
+  dayIndex: number
+): Task[] {
+  return all.filter(
+    t => isHabitTask(t) && t.goalId === goalId && t.dayOfWeek === dayIndex
   );
-  next.weeklyProgress = {
-    count: nextCount,
-    updatedAt: todayISO,
-  };
-  return next;
 }
 
-/**
- * Actualiza racha a nivel "día con actividad".
- * Regla: si hay actividad hoy y ayer también hubo (según lastCheck), racha++.
- * Si hubo corte (no fue ayer), racha = 1.
- * Si ya se registró hoy, no cambia.
- */
-export function applyDailyStreak(goal: Goal, todayISO: string): Goal {
-  const g = { ...goal };
-  const last = goal.streak.lastCheck;
-
-  if (isSameDay(last, todayISO)) {
-    // ya se contó hoy → no tocar
-    return g;
-  }
-
-  const yesterday = addDaysISO(todayISO, -1);
-  let current = 1;
-
-  if (isSameDay(last, yesterday)) {
-    current = goal.streak.current + 1;
-  }
-
-  g.streak = {
-    current,
-    highest: Math.max(goal.streak.highest, current),
-    active: true,
-    lastCheck: todayISO,
-  };
-
-  return g;
+function isTaskDoneOn(task: Task, iso: string): boolean {
+  return task.completedDates?.includes(iso) ?? false;
 }
 
-/**
- * Reverso básico al desmarcar: si restamos progreso semanal,
- * no tocamos racha (porque ya hubo actividad ese día). Si querés lógica
- * estricta (quitar racha si "desmarcás" la única actividad del día), habría
- * que llevar un "log diario" en Goals para saber si quedaron actividades.
- */
-export function applyWeeklyProgressOnly(
-  goal: Goal,
-  delta: number,
+// Un día está “cumplido” si TODAS las tareas planificadas para ese día están hechas.
+export function isHabitDayComplete(
+  goalId: string,
+  all: Task[],
+  iso: string
+): boolean {
+  const d = new Date(iso);
+  const dayIndex = d.getDay(); // 0..6
+  const planned = goalTasksForDate(goalId, all, dayIndex);
+  if (planned.length === 0) return false; // sin plan → no cuenta
+  return planned.every(t => isTaskDoneOn(t, iso));
+}
+
+// Al abrir la app (o cambiar de día), verificar si hubo días planificados sin cumplir desde el último registro.
+export function applyHabitRollOver(
+  goal: HabitGoal,
+  allTasks: Task[],
   todayISO: string
-): Goal {
-  const ensured = ensureWeeklyWindow(goal, todayISO);
-  return applyWeeklyProgress(ensured, delta, todayISO);
+): HabitGoal {
+  const last = goal.streak.lastCheck;
+  if (!last) return goal;
+
+  let cursor = addDaysISO(last, 1);
+  let g: HabitGoal = { ...goal };
+
+  while (cursor < todayISO) {
+    // si ese día había plan y NO se cumplió → racha se rompe
+    const plannedThatDay =
+      goalTasksForDate(goal.id, allTasks, new Date(cursor).getDay()).length > 0;
+    if (plannedThatDay && !isHabitDayComplete(goal.id, allTasks, cursor)) {
+      g = {
+        ...g,
+        streak: {
+          current: 0,
+          highest: g.streak.highest,
+          active: false,
+          lastCheck: g.streak.lastCheck,
+        },
+      };
+      break;
+    }
+    cursor = addDaysISO(cursor, 1);
+  }
+  return g;
 }
 
-/**
- * Flujo completo al marcar "hecha hoy":
- * - reset semanal si cambió de semana
- * - +1 al weeklyProgress (cappeado)
- * - actualizar racha diaria (si no se registró hoy)
- */
-export function registerActivityToday(goal: Goal, todayISO: string): Goal {
-  let g = ensureWeeklyWindow(goal, todayISO);
-  g = applyWeeklyProgress(g, +1, todayISO);
-  g = applyDailyStreak(g, todayISO);
+// Cuando el día pasa a “cumplido”, si nunca lo contamos hoy: sumamos 1 a weeklyProgress y avanzamos racha.
+export function registerHabitDayIfNeeded(
+  goal: HabitGoal,
+  allTasks: Task[],
+  todayISO: string
+): HabitGoal {
+  let g = ensureWeeklyWindowHabit(goal, todayISO);
+  if (!isHabitDayComplete(goal.id, allTasks, todayISO)) return g; // aún no está completo el día
+
+  // Ya estaba contado hoy?
+  if (g.streak.lastCheck === todayISO) return g;
+
+  const nextCurrent = g.streak.current + 1;
+  g = {
+    ...g,
+    streak: {
+      current: nextCurrent,
+      highest: Math.max(g.streak.highest, nextCurrent),
+      active: true,
+      lastCheck: todayISO,
+    },
+    weeklyProgress: {
+      count: Math.min(g.weeklyProgress.count + 1, g.weeklyTarget),
+      updatedAt: todayISO,
+    },
+  };
   return g;
+}
+
+// Si desmarcás y el día deja de estar completo, bajamos el weeklyProgress (no tocamos racha retroactivamente).
+export function uncountHabitDayIfBroken(
+  goal: HabitGoal,
+  allTasks: Task[],
+  todayISO: string
+): HabitGoal {
+  let g = ensureWeeklyWindowHabit(goal, todayISO);
+  if (isHabitDayComplete(goal.id, allTasks, todayISO)) return g; // sigue completo, no hay nada que revertir
+
+  const rollbackToday = g.streak.lastCheck === todayISO;
+  const nextCurrent =
+    rollbackToday ? Math.max(0, g.streak.current - 1) : g.streak.current;
+
+  g = {
+    ...g,
+    streak:
+      rollbackToday ?
+        {
+          current: nextCurrent,
+          highest: g.streak.highest, // la más alta no se toca
+          active: nextCurrent > 0,
+          // ponemos el último check en AYER para mantener línea temporal y permitir volver a contar hoy
+          lastCheck: addDaysISO(todayISO, -1),
+        }
+      : g.streak,
+    weeklyProgress: {
+      count: Math.max(0, g.weeklyProgress.count - 1),
+      updatedAt: todayISO,
+    },
+  };
+  return g;
+}
+
+// ---- PROJECT ----
+export function projectPercent(all: Task[], goalId: string): number {
+  const tasks = all.filter(
+    t => t.type === "project" && "goalId" in t && t.goalId === goalId
+  );
+  if (tasks.length === 0) return 0;
+  const done = tasks.filter(t => t.completed).length;
+  return Math.round((done / tasks.length) * 100);
 }

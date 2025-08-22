@@ -91,7 +91,9 @@ export const GoalDetailScreen = () => {
       case "resumen":
         return <GoalSummaryTab goal={goal} />;
       case "tareas":
-        return <GoalTasksTab goalId={goalId} tasks={tasks} />;
+        return (
+          <GoalTasksTab goalId={goalId} tasks={tasks} goalType={goal.type} />
+        );
       case "enfoque":
         return <FocusModeTab />;
     }

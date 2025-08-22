@@ -14,7 +14,7 @@ import { ThemeContext } from "../context/ThemeContext";
 import { UserContext } from "../context/UserContext";
 
 import { HomeScreen } from "../screens/HomeScreen";
-import { CreateTaskScreen } from "../screens/CreateTaskScreen";
+import { CreateTaskScreen } from "../screens/tasks/CreateTaskScreen";
 import { FriendsScreen } from "../screens/FriendsScreen";
 import { BlockerScreen } from "../screens/BlockerScreen";
 import { AccountScreen } from "../screens/AccountScreen";
