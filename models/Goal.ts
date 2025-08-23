@@ -2,6 +2,8 @@ import { HabitTask, ProjectTask } from "./Task";
 
 export type GoalType = "habit" | "project";
 
+export type ProjectOrdering = "priority" | "order" | "manual";
+
 export type GoalMessages = {
   fromPast: {
     type: "text" | "audio";
@@ -51,6 +53,7 @@ export type HabitGoal = BaseGoal & {
 
 export type ProjectGoal = BaseGoal & {
   type: "project";
+  taskOrdering: ProjectOrdering;
   progressType: "tasks";
   tasks: ProjectTask[]; // lista de pasos únicos
 };

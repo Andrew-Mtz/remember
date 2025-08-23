@@ -71,7 +71,9 @@ export const CreateTaskScreen = () => {
 
   // Deducción de modo (si no hay objetivo → standalone)
   const mode: "habit" | "project" | "standalone" =
-    !selectedGoal ? "standalone" : selectedGoal.type === "habit" ? "habit" : "project";
+    !selectedGoal ? "standalone"
+    : selectedGoal.type === "habit" ? "habit"
+    : "project";
 
   // -------------------------
   // Estado base + subtareas
@@ -86,7 +88,9 @@ export const CreateTaskScreen = () => {
   // HÁBITO
   // -------------------------
   const [habitDays, setHabitDays] = useState<number[]>(
-    selectedGoal?.type === "habit" ? [...(selectedGoal as HabitGoal).daysOfWeek] : []
+    selectedGoal?.type === "habit" ?
+      [...(selectedGoal as HabitGoal).daysOfWeek]
+    : []
   );
   const [assignedDays, setAssignedDays] = useState<number[]>([]); // CREATE
   const [selectedDayEdit, setSelectedDayEdit] = useState<number | null>(null); // EDIT
@@ -164,12 +168,16 @@ export const CreateTaskScreen = () => {
   // -------------------------
   const toggleAssigned = (d: number) => {
     setAssignedDays(prev =>
-      prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort((a, b) => a - b)
+      prev.includes(d) ?
+        prev.filter(x => x !== d)
+      : [...prev, d].sort((a, b) => a - b)
     );
   };
   const toggleCustom = (d: number) => {
     setCustomDays(prev =>
-      prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort((a, b) => a - b)
+      prev.includes(d) ?
+        prev.filter(x => x !== d)
+      : [...prev, d].sort((a, b) => a - b)
     );
   };
   const addSubtaskLocal = () => {
@@ -202,11 +210,10 @@ export const CreateTaskScreen = () => {
     if (!canSave) {
       Alert.alert(
         "Revisá los datos",
-        mode === "habit"
-          ? isEdit
-            ? "Elegí un día válido para esta tarea del hábito."
-            : "Elegí al menos un día válido para esta tarea del hábito."
-          : "El título es obligatorio."
+        mode === "habit" ?
+          isEdit ? "Elegí un día válido para esta tarea del hábito."
+          : "Elegí al menos un día válido para esta tarea del hábito."
+        : "El título es obligatorio."
       );
       return;
     }
@@ -220,7 +227,10 @@ export const CreateTaskScreen = () => {
         if (selectedGoal?.type !== "habit") return;
         const allowed = new Set((selectedGoal as HabitGoal).daysOfWeek);
         if (selectedDayEdit === null || !allowed.has(selectedDayEdit)) {
-          Alert.alert("Día inválido", "Solo podés elegir entre los días del objetivo.");
+          Alert.alert(
+            "Día inválido",
+            "Solo podés elegir entre los días del objetivo."
+          );
           return;
         }
         const updated: Task = {
@@ -240,7 +250,8 @@ export const CreateTaskScreen = () => {
       }
 
       if (editingTask.type === "project") {
-        const orderNum = Number.isFinite(Number(orderStr)) ? Number(orderStr) : undefined;
+        const orderNum =
+          Number.isFinite(Number(orderStr)) ? Number(orderStr) : undefined;
         const updated: Task = {
           ...editingTask,
           title: title.trim(),
@@ -287,7 +298,10 @@ export const CreateTaskScreen = () => {
     if (mode === "habit" && selectedGoal?.type === "habit") {
       const allowed = new Set((selectedGoal as HabitGoal).daysOfWeek);
       if (!assignedDays.every(d => allowed.has(d))) {
-        Alert.alert("Días inválidos", "Solo podés asignar días definidos por el objetivo.");
+        Alert.alert(
+          "Días inválidos",
+          "Solo podés asignar días definidos por el objetivo."
+        );
         return;
       }
       const payloads: Task[] = assignedDays.map(d => ({
@@ -312,15 +326,22 @@ export const CreateTaskScreen = () => {
     }
 
     if (mode === "project" && selectedGoal?.type === "project") {
-      const orderNum = Number.isFinite(Number(orderStr)) ? Number(orderStr) : undefined;
+      const orderNum =
+        (
+          selectedGoal.taskOrdering === "order" &&
+          Number.isFinite(Number(orderStr))
+        ) ?
+          Number(orderStr)
+        : undefined;
       await addTask({
         id: uuid.v4().toString(),
         type: "project",
         goalId: selectedGoal.id,
         title: title.trim(),
         description: description.trim(),
-        priority,
-        order: orderNum,
+        priority:
+          selectedGoal.taskOrdering === "priority" ? priority : undefined,
+        order: selectedGoal.taskOrdering === "order" ? orderNum : undefined,
         subtasks,
         completed: false,
         completedDates: [],
@@ -373,13 +394,13 @@ export const CreateTaskScreen = () => {
               onPress={() => setRecurrenceType(rt)}
             >
               <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                {rt === "once"
-                  ? "Única"
-                  : rt === "daily"
-                    ? "Diaria"
-                    : rt === "weekly"
-                      ? "Semanal"
-                      : "Personalizada"}
+                {rt === "once" ?
+                  "Única"
+                : rt === "daily" ?
+                  "Diaria"
+                : rt === "weekly" ?
+                  "Semanal"
+                : "Personalizada"}
               </Text>
             </TouchableOpacity>
           );
@@ -411,7 +432,9 @@ export const CreateTaskScreen = () => {
                   onPress={() => toggleCustom(d)}
                   style={[styles.dayBtn, selected && styles.dayActive]}
                 >
-                  <Text style={[styles.dayText, selected && styles.dayTextActive]}>
+                  <Text
+                    style={[styles.dayText, selected && styles.dayTextActive]}
+                  >
                     {DAY_LETTERS[d]}
                   </Text>
                 </TouchableOpacity>
@@ -427,21 +450,24 @@ export const CreateTaskScreen = () => {
     <View style={styles.container}>
       {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top }]}>
-        <TouchableOpacity style={{ padding: 8 }} onPress={() => navigation.goBack()}>
+        <TouchableOpacity
+          style={{ padding: 8 }}
+          onPress={() => navigation.goBack()}
+        >
           <Ionicons name="close" size={22} color="#333" />
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>
-          {isEdit
-            ? mode === "habit"
-              ? "Editar tarea de hábito"
-              : mode === "project"
-                ? "Editar paso del proyecto"
-                : "Editar tarea"
-            : mode === "habit"
-              ? "Nueva tarea de hábito"
-              : mode === "project"
-                ? "Nuevo paso del proyecto"
-                : "Nueva tarea"}
+          {isEdit ?
+            mode === "habit" ?
+              "Editar tarea de hábito"
+            : mode === "project" ?
+              "Editar paso del proyecto"
+            : "Editar tarea"
+          : mode === "habit" ?
+            "Nueva tarea de hábito"
+          : mode === "project" ?
+            "Nuevo paso del proyecto"
+          : "Nueva tarea"}
         </Text>
         <TouchableOpacity
           style={{ padding: 8, opacity: canSave ? 1 : 0.5 }}
@@ -459,7 +485,9 @@ export const CreateTaskScreen = () => {
           selectedGoalId={selectedGoalId}
           onChange={id => setSelectedGoalId(id)}
           disabled={isEdit} // en edición no migramos objetivo
-          onCreateNewGoal={() => navigation.navigate("CreateGoalModal" as never)}
+          onCreateNewGoal={() =>
+            navigation.navigate("CreateGoalModal" as never)
+          }
         />
 
         {/* Título */}
@@ -467,7 +495,11 @@ export const CreateTaskScreen = () => {
           <Text style={styles.label}>Título</Text>
           <TextInput
             style={styles.input}
-            placeholder={mode === "project" ? "Ej: Comprar lana" : "Ej: Ver video de inglés"}
+            placeholder={
+              mode === "project" ? "Ej: Comprar lana" : (
+                "Ej: Ver video de inglés"
+              )
+            }
             value={title}
             onChangeText={setTitle}
           />
@@ -488,34 +520,49 @@ export const CreateTaskScreen = () => {
         {/* PROJECT: prioridad y orden */}
         {mode === "project" && selectedGoal?.type === "project" && (
           <View style={styles.section}>
-            <Text style={styles.label}>Prioridad</Text>
-            <View style={styles.rowWrap}>
-              {(["low", "medium", "high"] as const).map(p => {
-                const active = priority === p;
-                return (
-                  <TouchableOpacity
-                    key={p}
-                    style={[styles.chip, active && styles.chipActive]}
-                    onPress={() => setPriority(p)}
-                  >
-                    <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                      {p === "high" ? "Alta" : p === "medium" ? "Media" : "Baja"}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <View style={{ marginTop: 10 }}>
-              <Text style={styles.label}>Orden (opcional)</Text>
-              <TextInput
-                style={styles.input}
-                keyboardType="numeric"
-                placeholder="Ej: 1"
-                value={orderStr}
-                onChangeText={setOrderStr}
-              />
-            </View>
+            {selectedGoal.taskOrdering === "priority" ?
+              <>
+                <Text style={styles.label}>Prioridad</Text>
+                <View style={styles.rowWrap}>
+                  {(["low", "medium", "high"] as const).map(p => {
+                    const active = priority === p;
+                    return (
+                      <TouchableOpacity
+                        key={p}
+                        style={[styles.chip, active && styles.chipActive]}
+                        onPress={() => setPriority(p)}
+                      >
+                        <Text
+                          style={[
+                            styles.chipText,
+                            active && styles.chipTextActive,
+                          ]}
+                        >
+                          {p === "high" ?
+                            "Alta"
+                          : p === "medium" ?
+                            "Media"
+                          : "Baja"}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </>
+            : <>
+                <Text style={styles.label}>Orden</Text>
+                <TextInput
+                  style={styles.input}
+                  keyboardType="numeric"
+                  placeholder="Ej: 1"
+                  value={orderStr}
+                  onChangeText={setOrderStr}
+                />
+                <Text style={styles.helper}>
+                  Podés repetir números (1, 2, 2, 3...).
+                </Text>
+              </>
+            }
           </View>
         )}
 
@@ -527,7 +574,8 @@ export const CreateTaskScreen = () => {
             </Text>
             <View style={styles.daysRow}>
               {habitDays.map(d => {
-                const selected = isEdit ? selectedDayEdit === d : assignedDays.includes(d);
+                const selected =
+                  isEdit ? selectedDayEdit === d : assignedDays.includes(d);
                 return (
                   <TouchableOpacity
                     key={d}
@@ -536,7 +584,9 @@ export const CreateTaskScreen = () => {
                     }
                     style={[styles.dayBtn, selected && styles.dayActive]}
                   >
-                    <Text style={[styles.dayText, selected && styles.dayTextActive]}>
+                    <Text
+                      style={[styles.dayText, selected && styles.dayTextActive]}
+                    >
                       {DAY_LETTERS[d]}
                     </Text>
                   </TouchableOpacity>
@@ -544,7 +594,11 @@ export const CreateTaskScreen = () => {
               })}
             </View>
             <Text style={styles.helper}>
-              Solo podés elegir {isEdit ? "un día válido" : "entre los días configurados en el objetivo"}.
+              Solo podés elegir{" "}
+              {isEdit ?
+                "un día válido"
+              : "entre los días configurados en el objetivo"}
+              .
             </Text>
           </View>
         )}
@@ -586,14 +640,16 @@ export const CreateTaskScreen = () => {
                     style={[styles.chip, active && styles.chipActive]}
                     onPress={() => setRecurrenceType(rt)}
                   >
-                    <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                      {rt === "once"
-                        ? "Única"
-                        : rt === "daily"
-                          ? "Diaria"
-                          : rt === "weekly"
-                            ? "Semanal"
-                            : "Personalizada"}
+                    <Text
+                      style={[styles.chipText, active && styles.chipTextActive]}
+                    >
+                      {rt === "once" ?
+                        "Única"
+                      : rt === "daily" ?
+                        "Diaria"
+                      : rt === "weekly" ?
+                        "Semanal"
+                      : "Personalizada"}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -625,7 +681,12 @@ export const CreateTaskScreen = () => {
                         onPress={() => toggleCustom(d)}
                         style={[styles.dayBtn, selected && styles.dayActive]}
                       >
-                        <Text style={[styles.dayText, selected && styles.dayTextActive]}>
+                        <Text
+                          style={[
+                            styles.dayText,
+                            selected && styles.dayTextActive,
+                          ]}
+                        >
                           {DAY_LETTERS[d]}
                         </Text>
                       </TouchableOpacity>

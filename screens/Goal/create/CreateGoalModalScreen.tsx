@@ -15,7 +15,12 @@ import uuid from "react-native-uuid";
 import { SafeScreen } from "../../../layout/SafeScreen";
 
 import { GoalsContext } from "../../../context/GoalsContext";
-import { Goal, HabitGoal, ProjectGoal } from "../../../models/Goal";
+import {
+  Goal,
+  HabitGoal,
+  ProjectGoal,
+  ProjectOrdering,
+} from "../../../models/Goal";
 
 const DAYS = ["L", "M", "X", "J", "V", "S", "D"]; // 0..6 (arrancamos L=0 para UX, luego mapeamos)
 
@@ -32,13 +37,12 @@ export const CreateGoalModalScreen = () => {
   // Tipo de objetivo
   const [goalType, setGoalType] = useState<"habit" | "project">("habit");
 
-  // Para UX mostramos L..D empezando en lunes index 0, pero en modelo necesitamos 0..6 con Domingo=0
-  // Mapeo: UX L..D => modelo [1,2,3,4,5,6,0]
-  const uxToModelIndex = (uxIndex: number) => {
-    // uxIndex: 0..6 => L=0 -> 1, ..., S=5 -> 6, D=6 -> 0
-    return uxIndex === 6 ? 0 : uxIndex + 1;
-  };
+  // Hábito: UX muestra L..D (L=0). Modelo: 0..6 con D=0
+  const uxToModelIndex = (uxIndex: number) => (uxIndex === 6 ? 0 : uxIndex + 1);
   const [selectedUxDays, setSelectedUxDays] = useState<number[]>([]);
+
+  // Project: modo de orden
+  const [taskOrdering, setTaskOrdering] = useState<ProjectOrdering>("priority");
 
   // Recordatorios + motivación
   const [remindersEnabled, setRemindersEnabled] = useState(false);
@@ -72,20 +76,15 @@ export const CreateGoalModalScreen = () => {
         Alert.alert("Error", "El título es obligatorio");
         return;
       }
-      if (goalType === "habit") {
-        if (selectedUxDays.length === 0) {
-          Alert.alert("Error", "Seleccioná al menos un día");
-          return;
-        }
+      if (goalType === "habit" && selectedUxDays.length === 0) {
+        Alert.alert("Error", "Seleccioná al menos un día");
+        return;
       }
       return;
     }
 
     const now = new Date().toISOString();
-
     let newGoal: Goal;
-
-    const modelDays = selectedUxDays.map(uxToModelIndex);
 
     if (goalType === "habit") {
       const modelDays = selectedUxDays.map(uxToModelIndex); // a 0..6 con D=0
@@ -98,7 +97,7 @@ export const CreateGoalModalScreen = () => {
         type: "habit",
         progressType: "days",
         daysOfWeek: modelDays,
-        weeklyTarget: modelDays.length, // 👈 derivado de los días elegidos
+        weeklyTarget: modelDays.length,
         streak: { current: 0, highest: 0, active: false, lastCheck: "" },
         weeklyProgress: { count: 0, updatedAt: now },
         tasks: [],
@@ -121,7 +120,8 @@ export const CreateGoalModalScreen = () => {
         category: category.trim(),
         type: "project",
         progressType: "tasks",
-        tasks: [], // pasos únicos
+        taskOrdering, // 👈 NUEVO: prioridad | orden
+        tasks: [],
         startDate: now,
         messages: {
           fromPast: { type: "text", content: fromPast },
@@ -204,7 +204,46 @@ export const CreateGoalModalScreen = () => {
           </Text>
         </View>
 
-        {/* Si es HÁBITO: cantidad de días + qué días */}
+        {/* Proyecto: modo de orden */}
+        {goalType === "project" && (
+          <View style={styles.rowBlock}>
+            <Text style={styles.label}>Organizar tareas por</Text>
+            <View style={styles.rowWrap}>
+              {(["priority", "order", "manual"] as ProjectOrdering[]).map(
+                opt => {
+                  const active = taskOrdering === opt;
+                  return (
+                    <TouchableOpacity
+                      key={opt}
+                      style={[styles.chip, active && styles.chipActive]}
+                      onPress={() => setTaskOrdering(opt)}
+                    >
+                      <Text
+                        style={[
+                          styles.chipText,
+                          active && styles.chipTextActive,
+                        ]}
+                      >
+                        {opt === "priority" ?
+                          "Prioridad"
+                        : opt === "manual" ?
+                          "Orden manual"
+                        : "Orden numerico"}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                }
+              )}
+            </View>
+            <Text style={styles.helper}>
+              Podrás cambiarlo luego desde “Editar objetivo”. En “Prioridad” ves
+              secciones Alta/Media/Baja; en “Orden manual” podrás reordenar
+              (drag & drop) y Orden numerico iran del mas bajo al mas alto.
+            </Text>
+          </View>
+        )}
+
+        {/* Hábito: elegir días */}
         {goalType === "habit" && (
           <View style={styles.rowBlock}>
             <Text style={styles.label}>Elegí los días</Text>
@@ -216,13 +255,7 @@ export const CreateGoalModalScreen = () => {
                     styles.dayBtn,
                     selectedUxDays.includes(i) && styles.daySelected,
                   ]}
-                  onPress={() =>
-                    setSelectedUxDays(prev =>
-                      prev.includes(i) ?
-                        prev.filter(x => x !== i)
-                      : [...prev, i]
-                    )
-                  }
+                  onPress={() => toggleUxDay(i)}
                 >
                   <Text
                     style={[
@@ -235,15 +268,10 @@ export const CreateGoalModalScreen = () => {
                 </TouchableOpacity>
               ))}
             </View>
-
             <Text style={[styles.helper, { marginTop: 8 }]}>
               {selectedUxDays.length === 0 ?
                 "Seleccioná al menos un día."
-              : `Elegiste ${selectedUxDays.length} día(s): ${selectedUxDays
-                  .slice()
-                  .sort((a, b) => a - b)
-                  .map(i => DAYS[i])
-                  .join(", ")}.`
+              : `Elegiste ${selectedUxDays.length} día(s): ${selectedDaysPreview}.`
               }
             </Text>
           </View>
