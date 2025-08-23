@@ -8,7 +8,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
-import { Task } from "../models/Task";
+import { ProjectTask, Task } from "../models/Task";
 import { TasksContext } from "../context/TasksContext";
 import { ConfirmDialog } from "./ConfirmDialog";
 
@@ -27,8 +27,8 @@ export const ProjectTasksTab = ({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [toDeleteId, setToDeleteId] = useState<string | null>(null);
 
-  const projectTasks = useMemo(
-    () => tasks.filter(t => t.type === "project"),
+  const projectTasks: ProjectTask[] = useMemo(
+    () => tasks.filter((t): t is ProjectTask => t.type === "project"),
     [tasks]
   );
 
@@ -38,19 +38,48 @@ export const ProjectTasksTab = ({
         (a.order ?? Number.MAX_SAFE_INTEGER) -
         (b.order ?? Number.MAX_SAFE_INTEGER);
       if (ao !== 0) return ao;
+
       const ap = pr[a.priority ?? "medium"] - pr[b.priority ?? "medium"];
       if (ap !== 0) return ap;
+
       // incompletas primero
       if (!!a.completed !== !!b.completed) return a.completed ? 1 : -1;
+
       return a.title.localeCompare(b.title);
     });
   }, [projectTasks]);
 
   const toggleCompleted = async (t: Task) => {
+    const target = !t.completed;
+    const now = new Date().toISOString();
+
+    const nextSubtasks = (t.subtasks ?? []).map(s => ({
+      ...s,
+      completed: target,
+    }));
+
     const updated: Task = {
       ...t,
-      completed: !t.completed,
-      updatedAt: new Date().toISOString(),
+      completed: target,
+      subtasks: nextSubtasks,
+      updatedAt: now,
+    };
+    await updateTask(updated);
+  };
+
+  const toggleSubtask = async (t: Task, subId: string) => {
+    const now = new Date().toISOString();
+    const nextSubtasks = (t.subtasks ?? []).map(s =>
+      s.id === subId ? { ...s, completed: !s.completed } : s
+    );
+    const hasSubs = nextSubtasks.length > 0;
+    const allChecked = hasSubs && nextSubtasks.every(s => s.completed);
+
+    const updated: Task = {
+      ...t,
+      subtasks: nextSubtasks,
+      completed: hasSubs ? allChecked : t.completed,
+      updatedAt: now,
     };
     await updateTask(updated);
   };
@@ -75,32 +104,63 @@ export const ProjectTasksTab = ({
     setToDeleteId(null);
   };
 
+  const badgeText = (t: ProjectTask) => {
+    const parts: string[] = [];
+    parts.push(String(t.order ?? "—"));
+    if (t.priority) parts.push(t.priority);
+    const total = t.subtasks?.length ?? 0;
+    if (total > 0) {
+      const done = t.subtasks!.filter(s => s.completed).length;
+      parts.push(`${done}/${total}`);
+    }
+    return parts.join(" · ");
+  };
+
   return (
     <View style={{ flex: 1 }}>
       <ScrollView contentContainerStyle={styles.container}>
-        {tasksSorted.length === 0 ?
+        {tasksSorted.length === 0 ? (
           <Text style={styles.noTasks}>Este proyecto aún no tiene tareas.</Text>
-        : tasksSorted.map(task => (
+        ) : (
+          tasksSorted.map(task => (
             <View key={task.id} style={styles.card}>
               <View style={styles.cardHeader}>
                 <Text style={styles.taskTitle}>🧩 {task.title}</Text>
                 <View style={styles.badge}>
-                  <Text style={styles.badgeText}>
-                    {task.order ?? "—"}
-                    {task.priority ? ` · ${task.priority}` : ""}
-                  </Text>
+                  <Text style={styles.badgeText}>{badgeText(task)}</Text>
                 </View>
               </View>
 
-              {task.subtasks?.length ?
-                <View style={{ marginTop: 6 }}>
-                  {task.subtasks.map(s => (
-                    <Text key={s.id} style={styles.subtask}>
-                      • {s.title}
-                    </Text>
-                  ))}
+              {task.subtasks?.length ? (
+                <View style={{ marginTop: 8 }}>
+                  {task.subtasks.map(s => {
+                    const checked = !!s.completed;
+                    return (
+                      <TouchableOpacity
+                        key={s.id}
+                        style={styles.subtaskRow}
+                        onPress={() => toggleSubtask(task, s.id)}
+                      >
+                        <Ionicons
+                          name={(checked ? "checkbox" : "square-outline") as any}
+                          size={18}
+                          color="#2bb673"
+                        />
+                        <Text
+                          style={[
+                            styles.subtaskText,
+                            checked && { textDecorationLine: "line-through" },
+                          ]}
+                        >
+                          {s.title}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
-              : <Text style={styles.noSubtasks}>Sin subtareas</Text>}
+              ) : (
+                <Text style={styles.noSubtasks}>Sin subtareas</Text>
+              )}
 
               <View style={styles.actionsRow}>
                 <TouchableOpacity
@@ -111,9 +171,7 @@ export const ProjectTasksTab = ({
                   onPress={() => toggleCompleted(task)}
                 >
                   <Ionicons
-                    name={
-                      task.completed ? "checkmark-circle" : "ellipse-outline"
-                    }
+                    name={task.completed ? "checkmark-circle" : "ellipse-outline"}
                     size={18}
                     color={task.completed ? "#fff" : "#2bb673"}
                   />
@@ -148,7 +206,7 @@ export const ProjectTasksTab = ({
               </View>
             </View>
           ))
-        }
+        )}
       </ScrollView>
 
       <TouchableOpacity style={styles.fab} onPress={handleCreate}>
@@ -192,7 +250,13 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   badgeText: { fontSize: 12, color: "#2bb673", fontWeight: "600" },
-  subtask: { fontSize: 14, color: "#234", marginLeft: 8, marginTop: 2 },
+  subtaskRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 4,
+  },
+  subtaskText: { fontSize: 14, color: "#234" },
   noSubtasks: {
     fontSize: 14,
     color: "#888",

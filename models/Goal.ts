@@ -40,6 +40,7 @@ export type HabitGoal = BaseGoal & {
     highest: number;
     active: boolean;
     lastCheck: string;
+    highestAt?: string;
   };
   weeklyProgress: {
     count: number;

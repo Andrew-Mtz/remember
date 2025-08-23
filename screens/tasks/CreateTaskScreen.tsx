@@ -16,23 +16,21 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { GoalsContext } from "../../context/GoalsContext";
 import { TasksContext } from "../../context/TasksContext";
-import { HabitGoal, ProjectGoal, Goal } from "../../models/Goal";
+import { HabitGoal, Goal } from "../../models/Goal";
+import { Task } from "../../models/Task";
 import { Subtask } from "../../models/Subtask";
-import { DAY_LETTERS } from "../../utils/dates";
+import { DAY_LETTERS, todayISOLocal } from "../../utils/dates";
+import { GoalPicker } from "../../components/GoalPicker";
 
 type Params = {
-  goalId?: string; // si viene, define modo habit o project según el goal
+  goalId?: string; // si viene, se preselecciona
   taskId?: string;
   mode?: "edit" | "create";
 };
 
-const RECURRENCE_TYPES = [
-  "once",
-  "daily",
-  "weekly",
-  "monthly",
-  "custom",
-] as const;
+// ✅ Un solo set de recurrencias (sin “monthly”)
+const RECURRENCE_TYPES = ["once", "daily", "weekly", "custom"] as const;
+type RecurrenceType = (typeof RECURRENCE_TYPES)[number];
 
 export const CreateTaskScreen = () => {
   const navigation = useNavigation();
@@ -40,70 +38,140 @@ export const CreateTaskScreen = () => {
   const route = useRoute<RouteProp<Record<string, Params>, string>>();
 
   const { goals, recomputeAfterTaskToggle } = useContext(GoalsContext);
-  const { tasks, addTask, bulkAdd, updateTask, deleteTask } =
-    useContext(TasksContext);
+  const { tasks, addTask, bulkAdd, updateTask } = useContext(TasksContext);
 
   const editingId = route.params?.taskId;
   const isEdit = route.params?.mode === "edit" && !!editingId;
-  const goalIdParam = route.params?.goalId;
 
-  const parentGoal: Goal | undefined = useMemo(
-    () => goals.find(g => g.id === goalIdParam),
-    [goals, goalIdParam]
+  // Tarea en edición (si aplica)
+  const editingTask: Task | undefined = useMemo(
+    () => (isEdit ? tasks.find(t => t.id === editingId) : undefined),
+    [isEdit, editingId, tasks]
   );
 
-  // Deducción de modo:
-  // - Si viene goalId y goal.type === "habit" → HabitTask.
-  // - Si viene goalId y goal.type === "project" → ProjectTask.
-  // - Si NO viene goalId → StandaloneTask.
-  const mode: "habit" | "project" | "standalone" =
-    !parentGoal ? "standalone"
-    : parentGoal.type === "habit" ? "habit"
-    : "project";
+  // -------------------------
+  // Selector de objetivo (unificado)
+  // -------------------------
+  // Inicial: si vengo con goalId → ese; si edito una tarea con goal (habit/project) lo seteo por efecto.
+  const [selectedGoalId, setSelectedGoalId] = useState<string | undefined>(
+    route.params?.goalId
+  );
 
+  // 🔧 Fix TS: seteamos desde la tarea en edición SOLO si no es standalone
   useEffect(() => {
-    if (parentGoal?.type === "habit") {
-      setHabitDays([...(parentGoal as HabitGoal).daysOfWeek]);
-      setAssignedDays([]); // reseteamos selección al cambiar de objetivo
+    if (isEdit && editingTask && editingTask.type !== "standalone") {
+      setSelectedGoalId((editingTask as any).goalId);
     }
-  }, [parentGoal?.id]);
+  }, [isEdit, editingTask]);
 
-  // Estado básico
+  const selectedGoal: Goal | undefined = useMemo(
+    () => goals.find(g => g.id === selectedGoalId),
+    [goals, selectedGoalId]
+  );
+
+  // Deducción de modo (si no hay objetivo → standalone)
+  const mode: "habit" | "project" | "standalone" =
+    !selectedGoal ? "standalone" : selectedGoal.type === "habit" ? "habit" : "project";
+
+  // -------------------------
+  // Estado base + subtareas
+  // -------------------------
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  // Habit-only: días disponibles = parentGoal.daysOfWeek
-  const [habitDays, setHabitDays] = useState<number[]>(
-    mode === "habit" ? [...(parentGoal as HabitGoal).daysOfWeek] : []
-  );
-  const [assignedDays, setAssignedDays] = useState<number[]>(
-    mode === "habit" ? [] : []
-  );
 
-  // Project-only: completed boolean (se mantiene false al crear)
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [newSubtask, setNewSubtask] = useState("");
 
-  // Standalone-only
-  const [recurrenceType, setRecurrenceType] =
-    useState<(typeof RECURRENCE_TYPES)[number]>("once");
-  const [interval, setInterval] = useState("1"); // para weekly/monthly
+  // -------------------------
+  // HÁBITO
+  // -------------------------
+  const [habitDays, setHabitDays] = useState<number[]>(
+    selectedGoal?.type === "habit" ? [...(selectedGoal as HabitGoal).daysOfWeek] : []
+  );
+  const [assignedDays, setAssignedDays] = useState<number[]>([]); // CREATE
+  const [selectedDayEdit, setSelectedDayEdit] = useState<number | null>(null); // EDIT
+
+  // -------------------------
+  // PROJECT
+  // -------------------------
+  const [priority, setPriority] = useState<"low" | "medium" | "high">("medium");
+  const [orderStr, setOrderStr] = useState<string>("");
+
+  // -------------------------
+  // STANDALONE (unificado)
+  // -------------------------
+  const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>("once");
+  const [interval, setInterval] = useState("1"); // para weekly
   const [customDays, setCustomDays] = useState<number[]>([]);
 
+  // -------------------------
+  // Prefill en edición
+  // -------------------------
+  useEffect(() => {
+    if (!isEdit || !editingTask) return;
+
+    // Base
+    setTitle(editingTask.title ?? "");
+    setDescription(editingTask.description ?? "");
+    setSubtasks(editingTask.subtasks ?? []);
+
+    if (editingTask.type === "habit") {
+      if (selectedGoal?.type === "habit") {
+        setHabitDays([...(selectedGoal as HabitGoal).daysOfWeek]);
+      }
+      setSelectedDayEdit((editingTask as any).dayOfWeek ?? null);
+    } else if (editingTask.type === "project") {
+      setPriority((editingTask.priority as any) ?? "medium");
+      setOrderStr(
+        typeof editingTask.order === "number" ? String(editingTask.order) : ""
+      );
+    } else if (editingTask.type === "standalone") {
+      const r = editingTask.recurrence;
+      const type = (r?.type ?? "once") as RecurrenceType;
+      setRecurrenceType(type);
+      if (type === "weekly") {
+        setInterval(String(r?.interval ?? 1));
+      } else if (type === "custom") {
+        setCustomDays([...(r?.daysOfWeek ?? [])]);
+      }
+    }
+  }, [isEdit, editingTask, selectedGoal]);
+
+  // Si cambia objetivo en creación → refrescar dependencias
+  useEffect(() => {
+    if (isEdit) return; // en edición no migramos objetivo
+    if (selectedGoal?.type === "habit") {
+      setHabitDays([...(selectedGoal as HabitGoal).daysOfWeek]);
+      setAssignedDays([]);
+    } else {
+      setHabitDays([]);
+      setAssignedDays([]);
+    }
+    if (selectedGoal?.type !== "project") {
+      setPriority("medium");
+      setOrderStr("");
+    }
+    if (selectedGoal) {
+      // no standalone
+      setRecurrenceType("once");
+      setInterval("1");
+      setCustomDays([]);
+    }
+  }, [isEdit, selectedGoal?.id, selectedGoal?.type]);
+
+  // -------------------------
+  // Helpers UI
+  // -------------------------
   const toggleAssigned = (d: number) => {
     setAssignedDays(prev =>
-      prev.includes(d) ?
-        prev.filter(x => x !== d)
-      : [...prev, d].sort((a, b) => a - b)
+      prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort((a, b) => a - b)
     );
   };
   const toggleCustom = (d: number) => {
     setCustomDays(prev =>
-      prev.includes(d) ?
-        prev.filter(x => x !== d)
-      : [...prev, d].sort((a, b) => a - b)
+      prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort((a, b) => a - b)
     );
   };
-
   const addSubtaskLocal = () => {
     if (!newSubtask.trim()) return;
     setSubtasks(prev => [
@@ -116,116 +184,264 @@ export const CreateTaskScreen = () => {
     setSubtasks(prev => prev.filter(s => s.id !== id));
   };
 
+  // -------------------------
+  // Validación
+  // -------------------------
   const canSave = useMemo(() => {
     if (!title.trim()) return false;
     if (mode === "habit") {
-      return assignedDays.length > 0; // tiene que asignarse a uno o más días válidos
+      return isEdit ? selectedDayEdit !== null : assignedDays.length > 0;
     }
-    // project/standalone: ok con título
     return true;
-  }, [title, mode, assignedDays]);
+  }, [title, mode, isEdit, assignedDays, selectedDayEdit]);
 
+  // -------------------------
+  // Guardado
+  // -------------------------
   const handleSave = async () => {
     if (!canSave) {
       Alert.alert(
         "Revisá los datos",
-        mode === "habit" ?
-          "Elegí al menos un día válido para esta tarea del hábito."
-        : "El título es obligatorio."
+        mode === "habit"
+          ? isEdit
+            ? "Elegí un día válido para esta tarea del hábito."
+            : "Elegí al menos un día válido para esta tarea del hábito."
+          : "El título es obligatorio."
       );
       return;
     }
 
     const now = new Date().toISOString();
+    const todayISO = todayISOLocal(); // ✅ local
 
-    if (mode === "habit" && parentGoal?.type === "habit") {
-      // Validar que assignedDays ⊆ daysOfWeek del objetivo (si seguís teniendo esa restricción)
-      const allowed = new Set((parentGoal as HabitGoal).daysOfWeek);
-      if (!assignedDays.every(d => allowed.has(d))) {
-        Alert.alert(
-          "Días inválidos",
-          "Solo podés asignar días definidos por el objetivo."
-        );
+    // ----- EDICIÓN -----
+    if (isEdit && editingTask) {
+      if (editingTask.type === "habit") {
+        if (selectedGoal?.type !== "habit") return;
+        const allowed = new Set((selectedGoal as HabitGoal).daysOfWeek);
+        if (selectedDayEdit === null || !allowed.has(selectedDayEdit)) {
+          Alert.alert("Día inválido", "Solo podés elegir entre los días del objetivo.");
+          return;
+        }
+        const updated: Task = {
+          ...editingTask,
+          title: title.trim(),
+          description: description.trim(),
+          subtasks,
+          dayOfWeek: selectedDayEdit as number,
+          updatedAt: now,
+        } as any;
+
+        await updateTask(updated);
+        const nextAll = tasks.map(t => (t.id === updated.id ? updated : t));
+        await recomputeAfterTaskToggle(selectedGoal.id, nextAll, todayISO);
+        navigation.goBack();
         return;
       }
 
-      const now = new Date().toISOString();
-      const todayISO = now.slice(0, 10);
-      const todayIdx = new Date(todayISO).getDay();
+      if (editingTask.type === "project") {
+        const orderNum = Number.isFinite(Number(orderStr)) ? Number(orderStr) : undefined;
+        const updated: Task = {
+          ...editingTask,
+          title: title.trim(),
+          description: description.trim(),
+          priority,
+          order: orderNum,
+          subtasks,
+          updatedAt: now,
+        };
+        await updateTask(updated);
+        navigation.goBack();
+        return;
+      }
 
-      // 👇 crear un task por día seleccionado
-      const payloads = assignedDays.map(d => ({
+      if (editingTask.type === "standalone") {
+        let rec: any;
+        switch (recurrenceType) {
+          case "custom":
+            rec = { type: "custom", daysOfWeek: customDays };
+            break;
+          case "weekly":
+            rec = { type: "weekly", interval: Number(interval) || 1 };
+            break;
+          case "daily":
+          case "once":
+          default:
+            rec = { type: recurrenceType };
+        }
+        const updated: Task = {
+          ...editingTask,
+          title: title.trim(),
+          description: description.trim(),
+          subtasks,
+          recurrence: rec,
+          updatedAt: now,
+        };
+        await updateTask(updated);
+        navigation.goBack();
+        return;
+      }
+    }
+
+    // ----- CREACIÓN -----
+    if (mode === "habit" && selectedGoal?.type === "habit") {
+      const allowed = new Set((selectedGoal as HabitGoal).daysOfWeek);
+      if (!assignedDays.every(d => allowed.has(d))) {
+        Alert.alert("Días inválidos", "Solo podés asignar días definidos por el objetivo.");
+        return;
+      }
+      const payloads: Task[] = assignedDays.map(d => ({
         id: uuid.v4().toString(),
-        type: "habit" as const,
-        goalId: parentGoal.id,
+        type: "habit",
+        goalId: selectedGoal.id,
         title: title.trim(),
         description: description.trim(),
-        dayOfWeek: d, // 👈 ahora un único día
+        dayOfWeek: d,
         subtasks,
         completed: false,
         completedDates: [],
         createdAt: now,
         updatedAt: now,
-      }));
+      })) as any;
 
-      await bulkAdd(payloads); // 👈 NUEVO
+      await bulkAdd(payloads);
+      const nextAll = [...tasks, ...payloads];
+      await recomputeAfterTaskToggle(selectedGoal.id, nextAll, todayISO);
+      navigation.goBack();
+      return;
+    }
 
-      const nextAllTasks = [...tasks, ...payloads];
-      await recomputeAfterTaskToggle(parentGoal.id, nextAllTasks, todayISO);
-    } else if (mode === "project" && parentGoal?.type === "project") {
+    if (mode === "project" && selectedGoal?.type === "project") {
+      const orderNum = Number.isFinite(Number(orderStr)) ? Number(orderStr) : undefined;
       await addTask({
         id: uuid.v4().toString(),
         type: "project",
-        goalId: parentGoal.id,
+        goalId: selectedGoal.id,
         title: title.trim(),
         description: description.trim(),
+        priority,
+        order: orderNum,
         subtasks,
         completed: false,
         completedDates: [],
         createdAt: now,
         updatedAt: now,
       } as any);
-    } else {
-      // standalone
-      const rec: any =
-        recurrenceType === "custom" ? { type: "custom", daysOfWeek: customDays }
-        : recurrenceType === "weekly" || recurrenceType === "monthly" ?
-          { type: recurrenceType, interval: Number(interval) || 1 }
-        : { type: recurrenceType };
-
-      await addTask({
-        id: uuid.v4().toString(),
-        type: "standalone",
-        title: title.trim(),
-        description: description.trim(),
-        recurrence: rec,
-        subtasks,
-        completed: false,
-        completedDates: [],
-        createdAt: now,
-        updatedAt: now,
-      } as any);
+      navigation.goBack();
+      return;
     }
 
+    // standalone
+    let rec: any;
+    switch (recurrenceType) {
+      case "custom":
+        rec = { type: "custom", daysOfWeek: customDays };
+        break;
+      case "weekly":
+        rec = { type: "weekly", interval: Number(interval) || 1 };
+        break;
+      case "daily":
+      case "once":
+      default:
+        rec = { type: recurrenceType };
+    }
+    await addTask({
+      id: uuid.v4().toString(),
+      type: "standalone",
+      title: title.trim(),
+      description: description.trim(),
+      recurrence: rec,
+      subtasks,
+      completed: false,
+      completedDates: [],
+      createdAt: now,
+      updatedAt: now,
+    } as any);
     navigation.goBack();
   };
 
+  const StandaloneRecurrence = () => (
+    <View style={styles.section}>
+      <Text style={styles.label}>Recurrencia</Text>
+      <View style={styles.rowWrap}>
+        {RECURRENCE_TYPES.map(rt => {
+          const active = recurrenceType === rt;
+          return (
+            <TouchableOpacity
+              key={rt}
+              style={[styles.chip, active && styles.chipActive]}
+              onPress={() => setRecurrenceType(rt)}
+            >
+              <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                {rt === "once"
+                  ? "Única"
+                  : rt === "daily"
+                    ? "Diaria"
+                    : rt === "weekly"
+                      ? "Semanal"
+                      : "Personalizada"}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {recurrenceType === "weekly" && (
+        <View style={{ marginTop: 10 }}>
+          <Text style={styles.label}>Intervalo (semanas)</Text>
+          <TextInput
+            style={styles.input}
+            keyboardType="numeric"
+            value={interval}
+            onChangeText={setInterval}
+            placeholder="1"
+          />
+        </View>
+      )}
+
+      {recurrenceType === "custom" && (
+        <View style={{ marginTop: 10 }}>
+          <Text style={styles.label}>Días</Text>
+          <View style={styles.daysRow}>
+            {[0, 1, 2, 3, 4, 5, 6].map(d => {
+              const selected = customDays.includes(d);
+              return (
+                <TouchableOpacity
+                  key={d}
+                  onPress={() => toggleCustom(d)}
+                  style={[styles.dayBtn, selected && styles.dayActive]}
+                >
+                  <Text style={[styles.dayText, selected && styles.dayTextActive]}>
+                    {DAY_LETTERS[d]}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      )}
+    </View>
+  );
+
   return (
     <View style={styles.container}>
-      {/* Header propio */}
+      {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top }]}>
-        <TouchableOpacity
-          style={{ padding: 8 }}
-          onPress={() => navigation.goBack()}
-        >
+        <TouchableOpacity style={{ padding: 8 }} onPress={() => navigation.goBack()}>
           <Ionicons name="close" size={22} color="#333" />
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>
-          {mode === "habit" ?
-            "Nueva tarea de hábito"
-          : mode === "project" ?
-            "Nuevo paso del proyecto"
-          : "Nueva tarea"}
+          {isEdit
+            ? mode === "habit"
+              ? "Editar tarea de hábito"
+              : mode === "project"
+                ? "Editar paso del proyecto"
+                : "Editar tarea"
+            : mode === "habit"
+              ? "Nueva tarea de hábito"
+              : mode === "project"
+                ? "Nuevo paso del proyecto"
+                : "Nueva tarea"}
         </Text>
         <TouchableOpacity
           style={{ padding: 8, opacity: canSave ? 1 : 0.5 }}
@@ -237,16 +453,21 @@ export const CreateTaskScreen = () => {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
+        {/* Selector de objetivo */}
+        <GoalPicker
+          goals={goals}
+          selectedGoalId={selectedGoalId}
+          onChange={id => setSelectedGoalId(id)}
+          disabled={isEdit} // en edición no migramos objetivo
+          onCreateNewGoal={() => navigation.navigate("CreateGoalModal" as never)}
+        />
+
         {/* Título */}
         <View style={styles.section}>
           <Text style={styles.label}>Título</Text>
           <TextInput
             style={styles.input}
-            placeholder={
-              mode === "project" ? "Ej: Comprar lana" : (
-                "Ej: Ver video de inglés"
-              )
-            }
+            placeholder={mode === "project" ? "Ej: Comprar lana" : "Ej: Ver video de inglés"}
             value={title}
             onChangeText={setTitle}
           />
@@ -264,38 +485,71 @@ export const CreateTaskScreen = () => {
           />
         </View>
 
-        {/* HÁBITO: asignar días dentro de los del objetivo */}
-        {mode === "habit" && parentGoal?.type === "habit" && (
+        {/* PROJECT: prioridad y orden */}
+        {mode === "project" && selectedGoal?.type === "project" && (
           <View style={styles.section}>
-            <Text style={styles.label}>Asignar a días del hábito</Text>
-            <View style={styles.daysRow}>
-              {habitDays.map(d => (
-                <TouchableOpacity
-                  key={d}
-                  onPress={() => toggleAssigned(d)}
-                  style={[
-                    styles.dayBtn,
-                    assignedDays.includes(d) && styles.dayActive,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.dayText,
-                      assignedDays.includes(d) && styles.dayTextActive,
-                    ]}
+            <Text style={styles.label}>Prioridad</Text>
+            <View style={styles.rowWrap}>
+              {(["low", "medium", "high"] as const).map(p => {
+                const active = priority === p;
+                return (
+                  <TouchableOpacity
+                    key={p}
+                    style={[styles.chip, active && styles.chipActive]}
+                    onPress={() => setPriority(p)}
                   >
-                    {DAY_LETTERS[d]}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+                    <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                      {p === "high" ? "Alta" : p === "medium" ? "Media" : "Baja"}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <View style={{ marginTop: 10 }}>
+              <Text style={styles.label}>Orden (opcional)</Text>
+              <TextInput
+                style={styles.input}
+                keyboardType="numeric"
+                placeholder="Ej: 1"
+                value={orderStr}
+                onChangeText={setOrderStr}
+              />
+            </View>
+          </View>
+        )}
+
+        {/* HÁBITO: días válidos */}
+        {mode === "habit" && selectedGoal?.type === "habit" && (
+          <View style={styles.section}>
+            <Text style={styles.label}>
+              {isEdit ? "Día asignado" : "Asignar a días del hábito"}
+            </Text>
+            <View style={styles.daysRow}>
+              {habitDays.map(d => {
+                const selected = isEdit ? selectedDayEdit === d : assignedDays.includes(d);
+                return (
+                  <TouchableOpacity
+                    key={d}
+                    onPress={() =>
+                      isEdit ? setSelectedDayEdit(d) : toggleAssigned(d)
+                    }
+                    style={[styles.dayBtn, selected && styles.dayActive]}
+                  >
+                    <Text style={[styles.dayText, selected && styles.dayTextActive]}>
+                      {DAY_LETTERS[d]}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
             <Text style={styles.helper}>
-              Solo podés elegir entre los días configurados en el objetivo.
+              Solo podés elegir {isEdit ? "un día válido" : "entre los días configurados en el objetivo"}.
             </Text>
           </View>
         )}
 
-        {/* SUBTAREAS: disponible en todos los modos */}
+        {/* SUBTAREAS */}
         <View style={styles.section}>
           <Text style={styles.label}>Subtareas (opcional)</Text>
           <View style={styles.subtaskRow}>
@@ -324,41 +578,31 @@ export const CreateTaskScreen = () => {
           <View style={styles.section}>
             <Text style={styles.label}>Recurrencia</Text>
             <View style={styles.rowWrap}>
-              {RECURRENCE_TYPES.map(rt => (
-                <TouchableOpacity
-                  key={rt}
-                  style={[
-                    styles.chip,
-                    recurrenceType === rt && styles.chipActive,
-                  ]}
-                  onPress={() => setRecurrenceType(rt)}
-                >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      recurrenceType === rt && styles.chipTextActive,
-                    ]}
+              {RECURRENCE_TYPES.map(rt => {
+                const active = recurrenceType === rt;
+                return (
+                  <TouchableOpacity
+                    key={rt}
+                    style={[styles.chip, active && styles.chipActive]}
+                    onPress={() => setRecurrenceType(rt)}
                   >
-                    {rt === "once" ?
-                      "Única"
-                    : rt === "daily" ?
-                      "Diaria"
-                    : rt === "weekly" ?
-                      "Semanal"
-                    : rt === "monthly" ?
-                      "Mensual"
-                    : "Personalizada"}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+                    <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                      {rt === "once"
+                        ? "Única"
+                        : rt === "daily"
+                          ? "Diaria"
+                          : rt === "weekly"
+                            ? "Semanal"
+                            : "Personalizada"}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
 
-            {(recurrenceType === "weekly" || recurrenceType === "monthly") && (
+            {recurrenceType === "weekly" && (
               <View style={{ marginTop: 10 }}>
-                <Text style={styles.label}>
-                  Intervalo{" "}
-                  {recurrenceType === "weekly" ? "(semanas)" : "(meses)"}
-                </Text>
+                <Text style={styles.label}>Intervalo (semanas)</Text>
                 <TextInput
                   style={styles.input}
                   keyboardType="numeric"
@@ -373,25 +617,20 @@ export const CreateTaskScreen = () => {
               <View style={{ marginTop: 10 }}>
                 <Text style={styles.label}>Días</Text>
                 <View style={styles.daysRow}>
-                  {[0, 1, 2, 3, 4, 5, 6].map(d => (
-                    <TouchableOpacity
-                      key={d}
-                      onPress={() => toggleCustom(d)}
-                      style={[
-                        styles.dayBtn,
-                        customDays.includes(d) && styles.dayActive,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.dayText,
-                          customDays.includes(d) && styles.dayTextActive,
-                        ]}
+                  {[0, 1, 2, 3, 4, 5, 6].map(d => {
+                    const selected = customDays.includes(d);
+                    return (
+                      <TouchableOpacity
+                        key={d}
+                        onPress={() => toggleCustom(d)}
+                        style={[styles.dayBtn, selected && styles.dayActive]}
                       >
-                        {DAY_LETTERS[d]}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+                        <Text style={[styles.dayText, selected && styles.dayTextActive]}>
+                          {DAY_LETTERS[d]}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
               </View>
             )}
@@ -431,7 +670,6 @@ const styles = StyleSheet.create({
   section: { marginBottom: 18 },
   label: { fontSize: 14, fontWeight: "700", color: "#333", marginBottom: 8 },
 
-  row: { flexDirection: "row", gap: 8 },
   rowWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
 
   chip: {
@@ -443,6 +681,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#f6f6f6",
   },
   chipActive: { backgroundColor: "#4e88ff", borderColor: "#4e88ff" },
+  chipDisabled: { opacity: 0.5 },
   chipText: { color: "#444", fontWeight: "700", fontSize: 12 },
   chipTextActive: { color: "#fff" },
 

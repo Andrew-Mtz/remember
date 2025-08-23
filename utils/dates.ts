@@ -24,7 +24,7 @@ export function parseLocalISODate(iso: string): Date {
   return new Date(y, (m ?? 1) - 1, d ?? 1);
 }
 
-export function isSameDayLocal(aISO?: string, bISO?: string): boolean {
+export function isSameLocalDay(aISO?: string, bISO?: string): boolean {
   if (!aISO || !bISO) return false;
   return aISO === bISO;
 }

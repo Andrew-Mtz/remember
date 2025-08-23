@@ -1,4 +1,3 @@
-// components/HabitTasksTab.tsx
 import { useContext, useMemo, useState } from "react";
 import {
   View,
@@ -6,41 +5,74 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 
-import { Task, HabitTask } from "../models/Task";
+import { Task } from "../models/Task";
 import { TasksContext } from "../context/TasksContext";
 import { GoalsContext } from "../context/GoalsContext";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { DAY_LETTERS, dayIndexFromISO, todayISOLocal } from "../utils/dates";
+import {
+  DAY_LETTERS,
+  todayISOLocal,
+  dayIndexFromISO,
+} from "../utils/dates";
 import { isHabit } from "../models/typeGuards";
 
-type Props = { tasks: Task[]; goalId: string };
+type HabitTask = Task & { type: "habit"; goalId: string; dayOfWeek: number };
+
+type Props = {
+  tasks: Task[];
+  goalId: string;
+};
+
+type SectionItem = {
+  task: HabitTask;
+  label: string;     // "Hoy" | "Próx: X" | "Últ: L"
+  disabled: boolean; // futuras/pasadas no interactúan
+};
 
 export const HabitTasksTab = ({ tasks, goalId }: Props) => {
   const navigation = useNavigation();
   const { tasks: tasksAll, updateTask, deleteTask } = useContext(TasksContext);
   const { recomputeAfterTaskToggle } = useContext(GoalsContext);
 
+  // Fechas y día SIEMPRE en local
   const todayISO = useMemo(() => todayISOLocal(), []);
   const todayIdx = useMemo(() => dayIndexFromISO(todayISO), [todayISO]);
 
+  // Solo hábitos con dayOfWeek:number
   const habitTasks = useMemo(() => tasks.filter(isHabit), [tasks]);
 
-  const today = useMemo(
-    () => habitTasks.filter(t => t.dayOfWeek === todayIdx),
-    [habitTasks, todayIdx]
-  );
-  const future = useMemo(
-    () => habitTasks.filter(t => t.dayOfWeek > todayIdx),
-    [habitTasks, todayIdx]
-  );
-  const past = useMemo(
-    () => habitTasks.filter(t => t.dayOfWeek < todayIdx),
-    [habitTasks, todayIdx]
-  );
+  // Agrupación: hoy / futuras / pasadas (sin duplicar tareas)
+  const { today, future, past } = useMemo(() => {
+    const t: SectionItem[] = [];
+    const f: SectionItem[] = [];
+    const p: SectionItem[] = [];
+
+    habitTasks.forEach(task => {
+      const d = task.dayOfWeek; // 0..6 local
+      if (d === todayIdx) {
+        t.push({ task, label: "Hoy", disabled: false });
+      } else if (d > todayIdx) {
+        f.push({ task, label: `Próx: ${DAY_LETTERS[d]}`, disabled: true });
+      } else {
+        p.push({ task, label: `Últ: ${DAY_LETTERS[d]}`, disabled: true });
+      }
+    });
+
+    const sortFn = (a: SectionItem, b: SectionItem) =>
+      a.task.dayOfWeek - b.task.dayOfWeek ||
+      a.task.title.localeCompare(b.task.title);
+
+    return {
+      today: t.sort(sortFn),
+      future: f.sort(sortFn),
+      past: p.sort(sortFn),
+    };
+  }, [habitTasks, todayIdx]);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [toDeleteId, setToDeleteId] = useState<string | null>(null);
@@ -50,13 +82,21 @@ export const HabitTasksTab = ({ tasks, goalId }: Props) => {
 
   const buildAllAfterUpdate = (u: Task) =>
     tasksAll.map(t => (t.id === u.id ? u : t));
-  const buildAllAfterDelete = (id: string) => tasksAll.filter(t => t.id !== id);
+  const buildAllAfterDelete = (id: string) =>
+    tasksAll.filter(t => t.id !== id);
 
+  // Toggle botón "Marcar hoy"
   const toggleDoneToday = async (t: HabitTask, disabled: boolean) => {
     if (disabled) return;
-    if (t.dayOfWeek !== todayIdx) return; // guard extra
+    if (t.dayOfWeek !== todayIdx) {
+      Alert.alert(
+        "No corresponde hoy",
+        `Esta tarea es para ${DAY_LETTERS[t.dayOfWeek]}.`
+      );
+      return;
+    }
 
-    const now = new Date().toISOString();
+    const now = new Date().toISOString(); // timestamp (no afecta local/UTC de la fecha del día)
     const set = new Set(t.completedDates ?? []);
     set.has(todayISO) ? set.delete(todayISO) : set.add(todayISO);
 
@@ -66,11 +106,37 @@ export const HabitTasksTab = ({ tasks, goalId }: Props) => {
       updatedAt: now,
     };
     await updateTask(updated);
-    await recomputeAfterTaskToggle(
-      goalId,
-      buildAllAfterUpdate(updated),
-      todayISO
+    const nextAll = buildAllAfterUpdate(updated);
+    await recomputeAfterTaskToggle(goalId, nextAll, todayISO);
+  };
+
+  // Toggle de subtarea + auto-completar/descompletar el DÍA local
+  const toggleSubtask = async (t: HabitTask, subId: string, disabled: boolean) => {
+    if (disabled) return;
+    if (t.dayOfWeek !== todayIdx) return;
+
+    const now = new Date().toISOString();
+    const nextSubtasks = (t.subtasks ?? []).map(s =>
+      s.id === subId ? { ...s, completed: !s.completed } : s
     );
+
+    const hasSubs = nextSubtasks.length > 0;
+    const allChecked = hasSubs && nextSubtasks.every(s => s.completed);
+
+    const set = new Set(t.completedDates ?? []);
+    if (allChecked) set.add(todayISO);
+    else set.delete(todayISO);
+
+    const updated: HabitTask = {
+      ...t,
+      subtasks: nextSubtasks,
+      completedDates: Array.from(set),
+      updatedAt: now,
+    };
+
+    await updateTask(updated);
+    const nextAll = buildAllAfterUpdate(updated);
+    await recomputeAfterTaskToggle(goalId, nextAll, todayISO);
   };
 
   const handleCreate = () =>
@@ -90,155 +156,118 @@ export const HabitTasksTab = ({ tasks, goalId }: Props) => {
   const confirmDelete = async () => {
     if (toDeleteId) {
       await deleteTask(toDeleteId);
-      await recomputeAfterTaskToggle(
-        goalId,
-        buildAllAfterDelete(toDeleteId),
-        todayISO
-      );
+      const nextAll = buildAllAfterDelete(toDeleteId);
+      await recomputeAfterTaskToggle(goalId, nextAll, todayISO);
     }
     setConfirmOpen(false);
     setToDeleteId(null);
   };
 
-  const Section = ({
-    title,
-    list,
-    disabledAll,
-    badgePrefix,
-  }: {
-    title: string;
-    list: HabitTask[];
-    disabledAll: boolean;
-    badgePrefix: string; // "Hoy" | "Día" | "Día"
-  }) => (
+  const Section = ({ title, items }: { title: string; items: SectionItem[] }) => (
     <View style={{ marginTop: 16 }}>
       <Text style={styles.sectionTitle}>{title}</Text>
-      {list.length ?
-        list
-          .sort(
-            (a, b) =>
-              a.dayOfWeek - b.dayOfWeek || a.title.localeCompare(b.title)
-          )
-          .map(task => {
-            const done = isDoneToday(task);
-            const disabled = disabledAll;
-            return (
-              <View
-                key={task.id}
-                style={[styles.card, disabled && styles.cardDisabled]}
-              >
-                <View style={styles.cardHeader}>
-                  <Text style={styles.taskTitle}>📝 {task.title}</Text>
-                  <View style={[styles.badge, disabled && styles.badgeMuted]}>
-                    <Text
-                      style={[
-                        styles.badgeText,
-                        disabled && styles.badgeTextMuted,
-                      ]}
-                    >{`${badgePrefix}${
-                      badgePrefix === "Hoy" ? "" : (
-                        `: ${DAY_LETTERS[task.dayOfWeek]}`
-                      )
-                    }`}</Text>
-                  </View>
-                </View>
-
-                {task.subtasks?.length ?
-                  <View style={{ marginTop: 6 }}>
-                    {task.subtasks.map(s => (
-                      <Text key={s.id} style={styles.subtask}>
-                        • {s.title}
-                      </Text>
-                    ))}
-                  </View>
-                : <Text style={styles.noSubtasks}>Sin subtareas</Text>}
-
-                <Text style={styles.planNote}>
-                  Día planificado: {DAY_LETTERS[task.dayOfWeek]}
-                </Text>
-
-                <View style={styles.actionsRow}>
-                  <TouchableOpacity
-                    style={[
-                      styles.doneBtn,
-                      done && styles.doneBtnActive,
-                      disabled && styles.doneBtnDisabled,
-                    ]}
-                    disabled={disabled}
-                    onPress={() => toggleDoneToday(task, disabled)}
-                  >
-                    <Ionicons
-                      name={done ? "checkmark-circle" : "ellipse-outline"}
-                      size={18}
-                      color={
-                        disabled ? "#9db6ff"
-                        : done ?
-                          "#fff"
-                        : "#4e88ff"
-                      }
-                    />
-                    <Text
-                      style={[
-                        styles.doneText,
-                        done && { color: "#fff" },
-                        disabled && { color: "#9db6ff" },
-                      ]}
-                    >
-                      {disabled ?
-                        "No disponible"
-                      : done ?
-                        "Hecha hoy"
-                      : "Marcar hoy"}
-                    </Text>
-                  </TouchableOpacity>
-
-                  <View style={{ flexDirection: "row", gap: 10 }}>
-                    <TouchableOpacity
-                      style={styles.linkBtn}
-                      onPress={() => handleEdit(task.id)}
-                    >
-                      <Ionicons name="pencil" size={16} color="#4e88ff" />
-                      <Text style={styles.linkText}>Editar</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.linkBtn}
-                      onPress={() => askDelete(task.id)}
-                    >
-                      <Ionicons name="trash" size={16} color="#ff4d4f" />
-                      <Text style={[styles.linkText, { color: "#ff4d4f" }]}>
-                        Eliminar
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
+      {items.length ? (
+        items.map(({ task, label, disabled }) => {
+          const done = isDoneToday(task);
+          return (
+            <View key={task.id} style={[styles.card, disabled && styles.cardDisabled]}>
+              <View style={styles.cardHeader}>
+                <Text style={styles.taskTitle}>📝 {task.title}</Text>
+                <View style={[styles.badge, disabled && styles.badgeMuted]}>
+                  <Text style={[styles.badgeText, disabled && styles.badgeTextMuted]}>
+                    {label}
+                  </Text>
                 </View>
               </View>
-            );
-          })
-      : <Text style={styles.noTasks}>No hay tareas.</Text>}
+
+              {/* Subtareas con toggle */}
+              {task.subtasks?.length ? (
+                <View style={{ marginTop: 8 }}>
+                  {task.subtasks.map(s => {
+                    const checked = !!s.completed;
+                    const icon = checked ? "checkbox" : "square-outline";
+                    const iconColor = disabled ? "#9db6ff" : "#4e88ff";
+                    return (
+                      <TouchableOpacity
+                        key={s.id}
+                        style={[styles.subtaskRow, disabled && { opacity: 0.7 }]}
+                        disabled={disabled}
+                        onPress={() => toggleSubtask(task, s.id, disabled)}
+                      >
+                        <Ionicons name={icon as any} size={18} color={iconColor} />
+                        <Text
+                          style={[
+                            styles.subtaskText,
+                            disabled && { color: "#889" },
+                            checked && { textDecorationLine: "line-through" },
+                          ]}
+                        >
+                          {s.title}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ) : (
+                <Text style={styles.noSubtasks}>Sin subtareas</Text>
+              )}
+
+              <Text style={styles.planNote}>
+                Plan: {DAY_LETTERS[task.dayOfWeek]}
+              </Text>
+
+              <View style={styles.actionsRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.doneBtn,
+                    done && styles.doneBtnActive,
+                    disabled && styles.doneBtnDisabled,
+                  ]}
+                  disabled={disabled}
+                  onPress={() => toggleDoneToday(task, disabled)}
+                >
+                  <Ionicons
+                    name={done ? "checkmark-circle" : "ellipse-outline"}
+                    size={18}
+                    color={disabled ? "#9db6ff" : done ? "#fff" : "#4e88ff"}
+                  />
+                  <Text
+                    style={[
+                      styles.doneText,
+                      done && { color: "#fff" },
+                      disabled && { color: "#9db6ff" },
+                    ]}
+                  >
+                    {disabled ? "No disponible" : done ? "Hecha hoy" : "Marcar hoy"}
+                  </Text>
+                </TouchableOpacity>
+
+                <View style={{ flexDirection: "row", gap: 10 }}>
+                  <TouchableOpacity style={styles.linkBtn} onPress={() => handleEdit(task.id)}>
+                    <Ionicons name="pencil" size={16} color="#4e88ff" />
+                    <Text style={styles.linkText}>Editar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.linkBtn} onPress={() => askDelete(task.id)}>
+                    <Ionicons name="trash" size={16} color="#ff4d4f" />
+                    <Text style={[styles.linkText, { color: "#ff4d4f" }]}>Eliminar</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          );
+        })
+      ) : (
+        <Text style={styles.noTasks}>No hay tareas.</Text>
+      )}
     </View>
   );
 
   return (
     <View style={{ flex: 1 }}>
       <ScrollView contentContainerStyle={styles.container}>
-        <Section
-          title="Tareas de hoy"
-          list={today}
-          disabledAll={false}
-          badgePrefix="Hoy"
-        />
-        <Section
-          title="Tareas futuras"
-          list={future}
-          disabledAll={true}
-          badgePrefix="Día"
-        />
-        <Section
-          title="Tareas pasadas"
-          list={past}
-          disabledAll={true}
-          badgePrefix="Día"
-        />
+        <Section title="Tareas de hoy" items={today} />
+        <Section title="Tareas futuras" items={future} />
+        <Section title="Tareas pasadas" items={past} />
       </ScrollView>
 
       <TouchableOpacity style={styles.fab} onPress={handleCreate}>
@@ -271,7 +300,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginTop: 8,
   },
-  cardDisabled: { opacity: 0.7 },
+  cardDisabled: { opacity: 0.85 },
 
   cardHeader: {
     flexDirection: "row",
@@ -290,15 +319,11 @@ const styles = StyleSheet.create({
   badgeText: { fontSize: 12, color: "#3f73ff", fontWeight: "600" },
   badgeTextMuted: { color: "#8aa6ff" },
 
-  subtask: { fontSize: 14, color: "#444", marginLeft: 8, marginTop: 2 },
-  noSubtasks: {
-    fontSize: 14,
-    color: "#888",
-    fontStyle: "italic",
-    marginTop: 4,
-  },
+  subtaskRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4 },
+  subtaskText: { fontSize: 14, color: "#333" },
+  noSubtasks: { fontSize: 14, color: "#888", fontStyle: "italic", marginTop: 4 },
 
-  planNote: { marginTop: 6, fontSize: 12, color: "#789", fontStyle: "italic" },
+  planNote: { marginTop: 8, fontSize: 12, color: "#789", fontStyle: "italic" },
 
   actionsRow: {
     flexDirection: "row",

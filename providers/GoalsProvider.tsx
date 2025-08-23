@@ -1,5 +1,5 @@
 // providers/GoalsProvider.tsx
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { GoalsContext } from "../context/GoalsContext";
 import { Goal, HabitGoal } from "../models/Goal";
 import { Task } from "../models/Task";
@@ -11,9 +11,12 @@ import {
   registerHabitDayIfNeeded,
   uncountHabitDayIfBroken,
 } from "../services/progress";
+import { todayISOLocal } from "../utils/dates";
+import { TasksContext } from "../context/TasksContext";
 
 export const GoalsProvider = ({ children }: { children: React.ReactNode }) => {
   const [goals, setGoals] = useState<Goal[]>([]);
+  const { tasks } = useContext(TasksContext);
 
   useEffect(() => {
     (async () => {
@@ -49,6 +52,74 @@ export const GoalsProvider = ({ children }: { children: React.ReactNode }) => {
     },
     [goals]
   );
+
+  // -----------------------------
+  // ROLLOVER DIARIO (cambia de día local)
+  // -----------------------------
+  const [dayKey, setDayKey] = useState<string>(todayISOLocal());
+
+  useEffect(() => {
+    const tick = () => {
+      const nowISO = todayISOLocal();
+      if (nowISO !== dayKey) {
+        setDayKey(nowISO);
+      }
+    };
+    const id = setInterval(tick, 30_000);
+    return () => clearInterval(id);
+  }, [dayKey]);
+
+  // Cuando dayKey cambia => correr rollover diario para HÁBITOS
+  useEffect(() => {
+    const run = async () => {
+      const todayISO = dayKey;
+      const next = goals.map(goal => {
+        if (goal.type !== "habit") return goal;
+        let g = ensureWeeklyWindowHabit(goal as HabitGoal, todayISO);
+        g = applyHabitRollOver(g, tasks, todayISO);
+        return { ...g, updatedAt: new Date().toISOString() } as HabitGoal;
+      });
+      await persist(next);
+    };
+    if (goals.length) run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dayKey]); // solo al cambiar de día
+
+  // -----------------------------
+  // RE-EVALUAR HOY cuando cambian tasks
+  // (cubre: agregar una task de HOY descompleta el día)
+  // -----------------------------
+  const tasksHash = useMemo(() => JSON.stringify(tasks.map(t => ({
+    id: t.id, type: t.type, goalId: (t as any).goalId, dayOfWeek: (t as any).dayOfWeek,
+    completed: (t as any).completed, completedDates: t.completedDates
+  }))), [tasks]);
+
+  useEffect(() => {
+    const run = async () => {
+      const todayISO = todayISOLocal();
+      let changed = false;
+      const next = goals.map(goal => {
+        if (goal.type !== "habit") return goal;
+        let g = ensureWeeklyWindowHabit(goal as HabitGoal, todayISO);
+
+        if (isHabitDayComplete(g.id, tasks, todayISO)) {
+          g = registerHabitDayIfNeeded(g, tasks, todayISO);
+        } else {
+          g = uncountHabitDayIfBroken(g, tasks, todayISO);
+        }
+
+        if (JSON.stringify(g) !== JSON.stringify(goal)) {
+          changed = true;
+          return { ...g, updatedAt: new Date().toISOString() } as HabitGoal;
+        }
+        return goal;
+      });
+      if (changed) await persist(next);
+    };
+
+    if (goals.length) run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasksHash]); // cada vez que “cambie” la forma relevante de tasks
 
   /**
    * Se llama al marcar/desmarcar una tarea de HOY.
@@ -88,30 +159,15 @@ export const GoalsProvider = ({ children }: { children: React.ReactNode }) => {
     [goals]
   );
 
-  /**
-   * Opcional: al abrir la app o cambiar de día
-   * recalcular pérdidas de racha si hubo días planificados no cumplidos.
-   */
-  const runDailyRollover = useCallback(
-    async (allTasks: Task[], todayISO: string) => {
-      const next = goals.map(goal => {
-        if (goal.type !== "habit") return goal;
-        let g = ensureWeeklyWindowHabit(goal, todayISO) as HabitGoal;
-        g = applyHabitRollOver(g, allTasks, todayISO) as HabitGoal;
-        return g;
-      });
-      await persist(next);
-    },
-    [goals]
-  );
+  const runDailyRollover = useCallback(async (_allTasks: Task[], _todayISO: string) => {
+    // ya manejado por el efecto de dayKey
+    return;
+  }, []);
 
-  const runWeeklyRollover = useCallback(
-    async (_allTasks: Task[], _todayISO: string) => {
-      // Para hábitos, el reseteo de semana lo maneja ensureWeeklyWindow.
-      return;
-    },
-    []
-  );
+  const runWeeklyRollover = useCallback(async (_allTasks: Task[], _todayISO: string) => {
+    // para hábitos lo maneja ensureWeeklyWindow; proyectos no usan streak semanal aquí
+    return;
+  }, []);
 
   return (
     <GoalsContext.Provider

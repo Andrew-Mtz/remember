@@ -64,9 +64,9 @@ export function applyHabitRollOver(
   let g: HabitGoal = { ...goal };
 
   while (cursor < todayISO) {
-    // si ese día había plan y NO se cumplió → racha se rompe
+    const dayIdx = parseLocalISODate(cursor).getDay();
     const plannedThatDay =
-      goalTasksForDate(goal.id, allTasks, new Date(cursor).getDay()).length > 0;
+      goalTasksForDate(goal.id, allTasks, dayIdx).length > 0;
     if (plannedThatDay && !isHabitDayComplete(goal.id, allTasks, cursor)) {
       g = {
         ...g,
@@ -75,6 +75,7 @@ export function applyHabitRollOver(
           highest: g.streak.highest,
           active: false,
           lastCheck: g.streak.lastCheck,
+          highestAt: g.streak.highestAt,
         },
       };
       break;
@@ -91,25 +92,28 @@ export function registerHabitDayIfNeeded(
   todayISO: string
 ): HabitGoal {
   let g = ensureWeeklyWindowHabit(goal, todayISO);
-  if (!isHabitDayComplete(goal.id, allTasks, todayISO)) return g; // aún no está completo el día
+  if (!isHabitDayComplete(goal.id, allTasks, todayISO)) return g;
 
-  // Ya estaba contado hoy?
-  if (g.streak.lastCheck === todayISO) return g;
+  if (g.streak.lastCheck === todayISO) return g; // ya contado hoy
 
   const nextCurrent = g.streak.current + 1;
+  const bumpedHighest = nextCurrent > g.streak.highest;
+
   g = {
     ...g,
     streak: {
       current: nextCurrent,
-      highest: Math.max(g.streak.highest, nextCurrent),
+      highest: bumpedHighest ? nextCurrent : g.streak.highest,
       active: true,
       lastCheck: todayISO,
+      highestAt: bumpedHighest ? todayISO : g.streak.highestAt,
     },
     weeklyProgress: {
       count: Math.min(g.weeklyProgress.count + 1, g.weeklyTarget),
       updatedAt: todayISO,
     },
   };
+
   return g;
 }
 
@@ -120,29 +124,42 @@ export function uncountHabitDayIfBroken(
   todayISO: string
 ): HabitGoal {
   let g = ensureWeeklyWindowHabit(goal, todayISO);
-  if (isHabitDayComplete(goal.id, allTasks, todayISO)) return g; // sigue completo, no hay nada que revertir
+  if (isHabitDayComplete(goal.id, allTasks, todayISO)) return g; // sigue completo
 
-  const rollbackToday = g.streak.lastCheck === todayISO;
-  const nextCurrent =
-    rollbackToday ? Math.max(0, g.streak.current - 1) : g.streak.current;
-
+  // 1) bajar progreso semanal
   g = {
     ...g,
-    streak:
-      rollbackToday ?
-        {
-          current: nextCurrent,
-          highest: g.streak.highest, // la más alta no se toca
-          active: nextCurrent > 0,
-          // ponemos el último check en AYER para mantener línea temporal y permitir volver a contar hoy
-          lastCheck: addDaysISO(todayISO, -1),
-        }
-      : g.streak,
     weeklyProgress: {
       count: Math.max(0, g.weeklyProgress.count - 1),
       updatedAt: todayISO,
     },
   };
+
+  // 2) si lo que se deshace es el "día de hoy", revertir la racha de hoy
+  if (g.streak.lastCheck === todayISO) {
+    const prevCurrent = Math.max(0, g.streak.current - 1);
+
+    // bajar 'highest' solo si el máximo se había subido HOY
+    const shouldDropHighest =
+      g.streak.highestAt === todayISO && g.streak.highest === g.streak.current;
+
+    const newHighest = shouldDropHighest
+      ? Math.max(0, g.streak.highest - 1)
+      : g.streak.highest;
+
+    g = {
+      ...g,
+      streak: {
+        current: prevCurrent,
+        highest: newHighest,
+        active: prevCurrent > 0,
+        // mejor aproximación: el último día contado fue "ayer"
+        lastCheck: addDaysISO(todayISO, -1),
+        highestAt: shouldDropHighest ? undefined : g.streak.highestAt,
+      },
+    };
+  }
+
   return g;
 }
 
